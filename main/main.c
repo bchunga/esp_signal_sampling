@@ -69,8 +69,8 @@ static void continuous_adc_init(uint16_t adc1_chan_mask, uint16_t adc2_chan_mask
     adc_digi_configuration_t dig_cfg = {
         .conv_limit_en = ADC_CONV_LIMIT_EN,
         .conv_limit_num = 250,
-        .sample_freq_hz = 20 * 1000,
-        .conv_mode = ADC_CONV_MODE,
+        .sample_freq_hz = 80 * 1000,
+        .conv_mode = ADC_CONV_MODE, // ESP32C3 only supports Alter Mode
         .format = ADC_OUTPUT_TYPE,
     };
 
@@ -151,7 +151,9 @@ void app_main(void)
     #else
                 if (ADC_CONV_MODE == ADC_CONV_BOTH_UNIT || ADC_CONV_MODE == ADC_CONV_ALTER_UNIT) {
                     if (check_valid_data(p)) {
-                        ESP_LOGI(TAG, "Unit: %d,_Channel: %d, Value: %x", p->type2.unit+1, p->type2.channel, p->type2.data);
+                        // ESP_LOGI(TAG, "Unit: %d,_Channel: %d, Value: %x", p->type2.unit+1, p->type2.channel, p->type2.data);
+                        sprintf(&buffer, "$%d;", p->type2.data);
+                        printf("%s\n", buffer);
                     } else {
                         // abort();
                         ESP_LOGI(TAG, "Invalid data [%d_%d_%x]", p->type2.unit+1, p->type2.channel, p->type2.data);
