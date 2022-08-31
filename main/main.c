@@ -13,7 +13,7 @@
 #include "freertos/semphr.h"
 #include "driver/adc.h"
 
-#define TIMES              256
+#define TIMES              512
 #define GET_UNIT(x)        ((x>>3) & 0x1)
 
 #if CONFIG_IDF_TARGET_ESP32
@@ -21,33 +21,19 @@
 #define ADC_CONV_LIMIT_EN   1                       //For ESP32, this should always be set to 1
 #define ADC_CONV_MODE       ADC_CONV_SINGLE_UNIT_1  //ESP32 only supports ADC1 DMA mode
 #define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE1
-#elif CONFIG_IDF_TARGET_ESP32S2
-#define ADC_RESULT_BYTE     2
-#define ADC_CONV_LIMIT_EN   0
-#define ADC_CONV_MODE       ADC_CONV_BOTH_UNIT
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
-#elif CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32H2
+#elif CONFIG_IDF_TARGET_ESP32C3
 #define ADC_RESULT_BYTE     4
 #define ADC_CONV_LIMIT_EN   0
 #define ADC_CONV_MODE       ADC_CONV_ALTER_UNIT     //ESP32C3 only supports alter mode
 #define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
-#elif CONFIG_IDF_TARGET_ESP32S3
-#define ADC_RESULT_BYTE     4
-#define ADC_CONV_LIMIT_EN   0
-#define ADC_CONV_MODE       ADC_CONV_BOTH_UNIT
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
 #endif
 
-#if CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32H2
+#if CONFIG_IDF_TARGET_ESP32C3
 static uint16_t adc1_chan_mask = BIT(2) | BIT(3);
 static uint16_t adc2_chan_mask = BIT(0);
 static adc_channel_t channel[3] = {ADC1_CHANNEL_2, ADC1_CHANNEL_3, (ADC2_CHANNEL_0 | 1 << 3)};
 #endif
-#if CONFIG_IDF_TARGET_ESP32S2
-static uint16_t adc1_chan_mask = BIT(2) | BIT(3);
-static uint16_t adc2_chan_mask = BIT(0);
-static adc_channel_t channel[3] = {ADC1_CHANNEL_2, ADC1_CHANNEL_3, (ADC2_CHANNEL_0 | 1 << 3)};
-#endif
+
 #if CONFIG_IDF_TARGET_ESP32
 static uint16_t adc1_chan_mask = BIT(7);
 static uint16_t adc2_chan_mask = 0;
@@ -59,7 +45,7 @@ static const char *TAG = "ADC DMA";
 static void continuous_adc_init(uint16_t adc1_chan_mask, uint16_t adc2_chan_mask, adc_channel_t *channel, uint8_t channel_num)
 {
     adc_digi_init_config_t adc_dma_config = {
-        .max_store_buf_size = 1024,
+        .max_store_buf_size = 2048,
         .conv_num_each_intr = TIMES,
         .adc1_chan_mask = adc1_chan_mask,
         .adc2_chan_mask = adc2_chan_mask,
@@ -83,10 +69,6 @@ static void continuous_adc_init(uint16_t adc1_chan_mask, uint16_t adc2_chan_mask
         adc_pattern[i].channel = ch;
         adc_pattern[i].unit = unit;
         adc_pattern[i].bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
-
-        // ESP_LOGI(TAG, "adc_pattern[%d].atten is :%x", i, adc_pattern[i].atten);
-        // ESP_LOGI(TAG, "adc_pattern[%d].channel is :%x", i, adc_pattern[i].channel);
-        // ESP_LOGI(TAG, "adc_pattern[%d].unit is :%x", i, adc_pattern[i].unit);
     }
     dig_cfg.adc_pattern = adc_pattern;
     ESP_ERROR_CHECK(adc_digi_controller_configure(&dig_cfg));
@@ -113,12 +95,7 @@ void app_main(void)
     continuous_adc_init(adc1_chan_mask, adc2_chan_mask, channel, sizeof(channel) / sizeof(adc_channel_t));
     adc_digi_start();
 
-    static char buffer[10] = { 0 };
-    static uint sum = 0;
-    static uint prom = 0;
-
     while(1) {
-        sum = 0;
         ret = adc_digi_read_bytes(result, TIMES, &ret_num, ADC_MAX_DELAY);
         if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) {
             if (ret == ESP_ERR_INVALID_STATE) {
@@ -139,34 +116,21 @@ void app_main(void)
                  */
             }
 
-            // ESP_LOGI("TASK:", "ret is %x, ret_num is %d", ret, ret_num);
             for (int i = 0; i < ret_num; i += ADC_RESULT_BYTE) {
                 adc_digi_output_data_t *p = (void*)&result[i];
                 
     #if CONFIG_IDF_TARGET_ESP32
-                // ESP_LOGI(TAG, "Unit: %d, Channel: %d, Value: %x", 1, p->type1.channel, p->type1.data);
-                sprintf(&buffer, "$%d;", p->type1.data);
-                printf("%s\n", buffer);
+                printf("$%s;\n", p->type1.data);
                 
     #else
                 if (ADC_CONV_MODE == ADC_CONV_BOTH_UNIT || ADC_CONV_MODE == ADC_CONV_ALTER_UNIT) {
                     if (check_valid_data(p)) {
-                        // ESP_LOGI(TAG, "Unit: %d,_Channel: %d, Value: %x", p->type2.unit+1, p->type2.channel, p->type2.data);
-                        sprintf(&buffer, "$%d;", p->type2.data);
-                        printf("%s\n", buffer);
+                        printf("$%s;\n", p->type2.data);
                     } else {
                         // abort();
                         ESP_LOGI(TAG, "Invalid data [%d_%d_%x]", p->type2.unit+1, p->type2.channel, p->type2.data);
                     }
                 }
-    #if CONFIG_IDF_TARGET_ESP32S2
-                else if (ADC_CONV_MODE == ADC_CONV_SINGLE_UNIT_2) {
-                    ESP_LOGI(TAG, "Unit: %d, Channel: %d, Value: %x", 2, p->type1.channel, p->type1.data);
-                } else if (ADC_CONV_MODE == ADC_CONV_SINGLE_UNIT_1) {
-                    ESP_LOGI(TAG, "Unit: %d, Channel: %d, Value: %x", 1, p->type1.channel, p->type1.data);
-                }
-            // prom = sum/ret_num;
-    #endif  //#if CONFIG_IDF_TARGET_ESP32S2
     #endif
             }
             
@@ -178,7 +142,7 @@ void app_main(void)
              * ``ESP_ERR_TIMEOUT``: If ADC conversion is not finished until Timeout, you'll get this return error.
              * Here we set Timeout ``portMAX_DELAY``, so you'll never reach this branch.
              */
-            // ESP_LOGW(TAG, "No data, increase timeout or reduce conv_num_each_intr");
+            
             vTaskDelay(1000);
         }
 
