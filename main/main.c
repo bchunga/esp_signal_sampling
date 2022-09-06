@@ -4,6 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+
+/**
+ * Considerations:
+ * 
+ * 1) Target Device should be specify into the SDKConfig to use the correct configuration for
+ *    ESP32 and ESP32C3 devices.
+ * 
+ * 2) To allow use the DMA Controller on ESP32C3, ESP-IDF v4.4 or higher environment is needed.
+ * 
+ * 3) Into the components/adc_read folder is a adc read library, but it uses ESP-IDF v4.2 
+ *    environment. The code above is based on ESP-IDF v4.4 so in faq to use de adc library 
+ *    the function have to be change to the functions used on v4.4.
+ * 
+ * 
+ */
+
 #include <string.h>
 #include <stdio.h>
 #include "sdkconfig.h"
@@ -13,19 +29,26 @@
 #include "freertos/semphr.h"
 #include "driver/adc.h"
 
+#if CONFIG_IDF_TARGET_ESP32C3
 #define TIMES              512
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32
+#define TIMER               256
+#endif
+
 #define GET_UNIT(x)        ((x>>3) & 0x1)
 
 #if CONFIG_IDF_TARGET_ESP32
 #define ADC_RESULT_BYTE     2
-#define ADC_CONV_LIMIT_EN   1                       //For ESP32, this should always be set to 1
-#define ADC_CONV_MODE       ADC_CONV_SINGLE_UNIT_1  //ESP32 only supports ADC1 DMA mode
+#define ADC_CONV_LIMIT_EN   1                       /* For ESP32, this should always be set to 1 */
+#define ADC_CONV_MODE       ADC_CONV_SINGLE_UNIT_1  /* ESP32 only supports ADC1 DMA mode */
 #define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE1
 #elif CONFIG_IDF_TARGET_ESP32C3
 #define ADC_RESULT_BYTE     4
 #define ADC_CONV_LIMIT_EN   0
-#define ADC_CONV_MODE       ADC_CONV_ALTER_UNIT     //ESP32C3 only supports alter mode
-#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2
+#define ADC_CONV_MODE       ADC_CONV_ALTER_UNIT     /* ESP32C3 only supports alter mode */
+#define ADC_OUTPUT_TYPE     ADC_DIGI_OUTPUT_FORMAT_TYPE2    /* ESP32C3 supports TYPE2 outputs */
 #endif
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -98,36 +121,21 @@ void app_main(void)
     while(1) {
         ret = adc_digi_read_bytes(result, TIMES, &ret_num, ADC_MAX_DELAY);
         if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) {
-            if (ret == ESP_ERR_INVALID_STATE) {
-                /**
-                 * @note 1
-                 * Issue:
-                 * As an example, we simply print the result out, which is super slow. Therefore the conversion is too
-                 * fast for the task to handle. In this condition, some conversion results lost.
-                 *
-                 * Reason:
-                 * When this error occurs, you will usually see the task watchdog timeout issue also.
-                 * Because the conversion is too fast, whereas the task calling `adc_digi_read_bytes` is slow.
-                 * So `adc_digi_read_bytes` will hardly block. Therefore Idle Task hardly has chance to run. In this
-                 * example, we add a `vTaskDelay(1)` below, to prevent the task watchdog timeout.
-                 *
-                 * Solution:
-                 * Either decrease the conversion speed, or increase the frequency you call `adc_digi_read_bytes`
-                 */
-            }
 
             for (int i = 0; i < ret_num; i += ADC_RESULT_BYTE) {
                 adc_digi_output_data_t *p = (void*)&result[i];
-                
+    /**
+     * Print if used to send data to the Serial Ploter (UART)
+     * 
+     */
     #if CONFIG_IDF_TARGET_ESP32
                 printf("$%s;\n", p->type1.data);
                 
-    #else
+    #else /* CONFIG_IDF_TARGET_ESP32C3 */
                 if (ADC_CONV_MODE == ADC_CONV_BOTH_UNIT || ADC_CONV_MODE == ADC_CONV_ALTER_UNIT) {
                     if (check_valid_data(p)) {
                         printf("$%s;\n", p->type2.data);
                     } else {
-                        // abort();
                         ESP_LOGI(TAG, "Invalid data [%d_%d_%x]", p->type2.unit+1, p->type2.channel, p->type2.data);
                     }
                 }
@@ -135,12 +143,15 @@ void app_main(void)
             }
             
 
-            //See `note 1`
+            /**
+             * To avoid Watchdog Timeout error.
+             * 
+             */
             vTaskDelay(1);
         } else if (ret == ESP_ERR_TIMEOUT) {
             /**
              * ``ESP_ERR_TIMEOUT``: If ADC conversion is not finished until Timeout, you'll get this return error.
-             * Here we set Timeout ``portMAX_DELAY``, so you'll never reach this branch.
+             * 
              */
             
             vTaskDelay(1000);
